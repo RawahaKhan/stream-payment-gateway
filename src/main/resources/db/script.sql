@@ -60,8 +60,6 @@ BEGIN
         DisplayName VARCHAR(100), -- Display name of the payment method
         PaymentType VARCHAR(50), -- Type of payment (e.g., Credit Card, Mobile Carrier, etc.)
         Country VARCHAR(10), -- Country where this method is available
-        CreatedAt DATETIME DEFAULT GETDATE(), -- Record creation timestamp
-        UpdatedAt DATETIME DEFAULT GETDATE() -- Record last update timestamp
     );
 
     -- Step 2.1: Create indexes for better performance
@@ -85,8 +83,6 @@ BEGIN
         GrossAmount DECIMAL(18, 2), -- Gross price of the payment plan
         Currency VARCHAR(10), -- Currency for the payment plan
         Duration VARCHAR(50), -- Duration for the payment plan (e.g., Month, Year, Week)
-        CreatedAt DATETIME DEFAULT GETDATE(), -- Record creation timestamp
-        UpdatedAt DATETIME DEFAULT GETDATE(), -- Record last update timestamp
         FOREIGN KEY (PaymentMethodID) REFERENCES payment.PaymentMethods(PaymentMethodID) ON DELETE CASCADE -- Foreign key relationship
     );
 

@@ -6,8 +6,10 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -76,7 +78,9 @@ public class PaymentMethodDao {
 	    List<PaymentMethod> addedPaymentMethods = new ArrayList<>();
 
 	    try {
-	        for (PaymentMethod paymentMethod : paymentMethods) {
+	    	Iterator<PaymentMethod> iterator = paymentMethods.iterator();
+	    	while (iterator.hasNext()) {
+	    		PaymentMethod paymentMethod = iterator.next();
 	            int generatedPaymentMethodId = insertPaymentMethod(paymentMethod);
 	            
 	            if (generatedPaymentMethodId > 0) {
@@ -85,6 +89,7 @@ public class PaymentMethodDao {
 	                addPaymentPlans(paymentMethod.getPaymentPlans(), generatedPaymentMethodId);
 	                addedPaymentMethods.add(paymentMethod);
 	            } else {
+	            	iterator.remove();
 	                LOGGER.error("Failed to generate ID for Payment Method: " + paymentMethod.getName());
 	            }
 	        }
@@ -102,21 +107,7 @@ public class PaymentMethodDao {
 	    try {
 	        SQLServerDataTable paymentPlanDataTable = getPaymentPlanTableTypeSchema();
 
-	        paymentMethod.getPaymentPlans().forEach(plan -> {
-	            try {
-	                paymentPlanDataTable.addRow(
-	                    plan.getId(),
-	                    plan.getNetAmount(),
-	                    plan.getTaxAmount(),
-	                    plan.getGrossAmount(),
-	                    plan.getCurrency(),
-	                    plan.getDuration()
-	                );
-	            } catch (SQLServerException e) {
-	                LOGGER.error("Error while adding row to TVP: {}", e.getMessage());
-	                throw new InvalidInputException(RequestIdGenerator.generateRequestId(), "Invalid payment plan details.");
-	            }
-	        });
+	        paymentMethod.getPaymentPlans().parallelStream().forEach(plan -> addPaymentPlanToTable(paymentPlanDataTable, plan));
 
 	        SqlRowSet rowSet = jdbcTemplate.queryForRowSet(
 	            QueryConstants.QRY_USP_UPDATE_PAYMENT_METHOD, id, paymentMethod.getName(),
@@ -125,7 +116,7 @@ public class PaymentMethodDao {
 	        );
 	        
 	        Integer paymentMethodId = 0;
-	        // Fetch the PaymentMethodID if available
+
 	        if (rowSet.next()) {
 	            paymentMethodId = rowSet.getInt("PaymentMethodID");
 	        }
@@ -154,23 +145,11 @@ public class PaymentMethodDao {
 			while (row.next()) {
 				String duration = row.getString("Duration");
 
-				Integer planId = row.getInt("PaymentPlanID");
-
-				// Create PaymentPlan object
-				BigDecimal grossAmountBD = row.getBigDecimal("GrossAmount");
-				Double grossAmount = grossAmountBD != null ? grossAmountBD.doubleValue() : 0.00;
-
-				BigDecimal netAmountBD = row.getBigDecimal("NetAmount");
-				Double netAmount = netAmountBD != null ? netAmountBD.doubleValue() : 0.0;
-
-				BigDecimal taxAmountBD = row.getBigDecimal("TaxAmount");
-				Double taxAmount = taxAmountBD != null ? taxAmountBD.doubleValue() : 0.0;
-
 				PaymentPlan plan = new PaymentPlan(
-						planId,
-						netAmount,
-						taxAmount,
-						grossAmount,
+						row.getInt("PaymentPlanID"),
+		                toDouble(row.getBigDecimal("NetAmount")),
+		                toDouble(row.getBigDecimal("TaxAmount")),
+		                toDouble(row.getBigDecimal("GrossAmount")),
 						row.getString("Currency"),
 						duration
 						);
@@ -180,7 +159,7 @@ public class PaymentMethodDao {
 				.add(plan);
 			}
 
-		} catch (Exception e) {
+		} catch (DataAccessException e) {
 			LOGGER.error("Error fetching payment methods: ", e);
 			throw new DatabaseException(RequestIdGenerator.generateRequestId(), e.getMessage());
 		}
@@ -239,22 +218,12 @@ public class PaymentMethodDao {
 
 	        if (rs.getObject("PaymentPlanID") != null) {
 	            Integer planId = rs.getInt("PaymentPlanID");
-
-	            BigDecimal grossAmountBD = rs.getBigDecimal("GrossAmount");
-	            Double grossAmount = grossAmountBD != null ? grossAmountBD.doubleValue() : 0.00;
-
-	            BigDecimal netAmountBD = rs.getBigDecimal("NetAmount");
-	            Double netAmount = netAmountBD != null ? netAmountBD.doubleValue() : 0.0;
-
-	            BigDecimal taxAmountBD = rs.getBigDecimal("TaxAmount");
-	            Double taxAmount = taxAmountBD != null ? taxAmountBD.doubleValue() : 0.0;
-
 	            
 	            PaymentPlan plan = new PaymentPlan(
 	                planId,
-	                netAmount,
-	                taxAmount,
-	                grossAmount,
+	                toDouble(rs.getBigDecimal("NetAmount")),
+	                toDouble(rs.getBigDecimal("TaxAmount")),
+	                toDouble(rs.getBigDecimal("GrossAmount")),
 	                rs.getString("Currency"), 
 	                rs.getString("Duration")         
 	            );
@@ -291,17 +260,21 @@ public class PaymentMethodDao {
 	        return ps;
 	    }, keyHolder);
 
-	    return (keyHolder.getKey() != null) ? keyHolder.getKey().intValue() : 0;
+	    return Optional.ofNullable(keyHolder.getKey())
+                .map(Number::intValue)
+                .orElse(0);
 	}
 
 	private void addPaymentPlans(List<PaymentPlan> paymentPlans, int paymentMethodId) {
-	    for (PaymentPlan plan : paymentPlans) {
+		Iterator<PaymentPlan> iterator = paymentPlans.iterator();
+		while (iterator.hasNext()) {
+			PaymentPlan plan = iterator.next();
 	        int generatedPaymentPlanId = insertPaymentPlan(plan, paymentMethodId);
 	        
 	        if (generatedPaymentPlanId > 0) {
 	            plan.setId(generatedPaymentPlanId);
 	        } else {
-	        	plan.setId(-1);
+	        	iterator.remove();
 	            LOGGER.error("Failed to generate ID for Payment Plan with method ID: " + paymentMethodId);
 	        }
 	    }
@@ -320,7 +293,29 @@ public class PaymentMethodDao {
 	        return ps;
 	    }, keyHolder);
 
-	    return (keyHolder.getKey() != null) ? keyHolder.getKey().intValue() : 0;
+	    return Optional.ofNullable(keyHolder.getKey())
+                .map(Number::intValue)
+                .orElse(0);
+	}
+	
+	private void addPaymentPlanToTable(SQLServerDataTable paymentPlanDataTable, PaymentPlan plan) {
+		try {
+            paymentPlanDataTable.addRow(
+                plan.getId(),
+                plan.getNetAmount(),
+                plan.getTaxAmount(),
+                plan.getGrossAmount(),
+                plan.getCurrency(),
+                plan.getDuration()
+            );
+        } catch (SQLServerException e) {
+            LOGGER.error("Error while adding row to TVP: {}", e.getMessage());
+            throw new InvalidInputException(RequestIdGenerator.generateRequestId(), "Invalid payment plan details.");
+        }
+	}
+	
+	private Double toDouble(BigDecimal bigDecimal) {
+	    return bigDecimal != null ? bigDecimal.doubleValue() : 0.0;
 	}
 
 }
